@@ -1,0 +1,209 @@
+# coding: UTF-8
+require 'mongo'
+require 'fileutils'
+require 'erb'
+require 'yaml'
+require 'tempfile'
+require "mongo_test_server/version"
+
+module MongoTestServer
+  
+  class Mongod
+  
+    class << self
+
+      def configure(options={}, &block)
+        options.each do |k,v|
+          server.send("#{k}=",v) if server.respond_to?("#{k}=")
+        end
+        yield(server) if block_given?
+      end
+
+      def server
+        @mongo_test_server ||= new
+      end
+  
+      def start_server
+        unless @mongo_test_server.nil?
+          @mongo_test_server.start
+        else
+          puts "MongoTestServer not configured properly!"
+        end
+      end
+  
+      def stop_server
+        unless @mongo_test_server.nil?
+          @mongo_test_server.stop
+        end
+      end
+  
+    end
+
+    attr_writer :port
+    attr_writer :path
+    attr_writer :name
+    attr_reader :mongo_instance_id
+  
+    def initialize(port=nil, name=nil, path=nil)
+      self.port = port
+      self.path = path
+      self.name = name
+      @mongo_process_or_thread = nil
+      @mongo_instance_id = "#{Time.now.to_i}_#{Random.new.rand(10000000000..90000000000)}"
+      @oplog_size = 200
+      @configured = true
+      self.started = false
+    end
+
+    def mongo_log
+      "#{mongo_dir}/mongo_log"
+    end
+
+    def port
+      @port ||= 27017
+    end
+
+    def path
+      @path ||= `which mongod`.chomp
+    end
+
+    def name
+      @name ||= "#{Random.new.rand(10000000000..90000000000)}"
+    end
+
+    def mongo_dir
+      @mongo_dir ||= "/tmp/#{self.name}_mongo_testserver_#{@mongo_instance_id}"
+    end
+
+    def mongo_cmd_line
+      "#{self.path} --port #{self.port} --dbpath #{self.mongo_dir} --noprealloc --nojournal --noauth --nohttpinterface --nssize 1 --oplogSize #{@oplog_size} --smallfiles --logpath #{self.mongo_log}"
+    end
+  
+    def prepare
+      FileUtils.rm_rf self.mongo_dir
+      FileUtils.mkdir_p self.mongo_dir
+    end
+
+    def running?
+      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
+      !pids.empty?
+    end
+  
+    def started?
+      File.directory?(self.mongo_dir) && File.exists?("#{self.mongo_dir}/started")
+    end
+
+    def killed?
+      !File.directory?(self.mongo_dir) || File.exists?("#{self.mongo_dir}/killed")
+    end
+
+    def started=(running)
+      if File.directory?(self.mongo_dir)
+        running ? FileUtils.touch("#{self.mongo_dir}/started") : FileUtils.rm_f("#{self.mongo_dir}/started")
+      end
+    end
+
+    def killed=(killing)
+      if File.directory?(self.mongo_dir)
+        killing ? FileUtils.touch("#{self.mongo_dir}/killed") : FileUtils.rm_f("#{self.mongo_dir}/killed")
+      end
+    end
+
+    def error?
+      File.exists?("#{self.mongo_dir}/error")
+    end
+  
+    def configured?
+      @configured
+    end
+  
+    def start
+      unless started?
+        prepare
+        if RUBY_PLATFORM=='java'
+          @mongo_process_or_thread = Thread.new { run(mongo_cmd_line) }
+        else
+          @mongo_process_or_thread = fork { run(mongo_cmd_line) }
+        end
+        wait_until_ready
+      end
+      self
+    end
+
+    def run(command, *args)
+      error_file = Tempfile.new('error')
+      error_filepath = error_file.path
+      error_file.close
+      args = args.join(' ') rescue ''
+      command << " #{args}" unless args.empty?
+      result = `#{command} 2>"#{error_filepath}"`
+      unless killed? || $?.success?
+        error_message = <<-ERROR
+          <#{self.class.name}> Error executing command: #{command}
+          <#{self.class.name}> Result is: #{IO.binread(self.mongo_log)}
+          <#{self.class.name}> Error is: #{File.read(error_filepath)}
+        ERROR
+        File.open("#{self.mongo_dir}/error", 'w') do |f|
+          f << error_message
+        end
+        self.killed=true
+      end
+      result
+    end
+  
+    def wait_until_ready
+      retries = 10
+      begin
+        self.started = true
+        c = Mongo::Connection.new("localhost", self.port)
+        c.close
+      rescue Exception => e
+        if retries>0 && !killed? && !error?
+          retries -= 1
+          sleep 0.5
+          retry
+        else
+          self.started = false
+          error_lines = []
+          error_lines << "<#{self.class.name}> cmd was: #{mongo_cmd_line}"
+          error_lines << "<#{self.class.name}> ERROR: Failed to connect to mongo database: #{e.message}"
+          IO.binread(self.mongo_log).split("\n").each do |line|
+            error_lines << "<#{self.class.name}> #{line}"
+          end
+          stop
+          raise Exception.new error_lines.join("\n")
+        end
+      end
+    end
+  
+    def pids
+      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
+      pids.split("\n").map {|p| (p.nil? || p=='') ? nil : p.to_i }
+    end
+  
+    def stop
+      mongo_pids = pids
+      self.killed = true
+      self.started = false
+      mongo_pids.each { |ppid| `kill -9 #{ppid} 2> /dev/null` }
+      FileUtils.rm_rf self.mongo_dir
+      self
+    end
+
+    def mongoid_options(options={})
+      options = {host: "localhost", port: self.port, database: "#{self.name}_test_db", use_utc: false, use_activesupport_time_zone: true}.merge(options)
+    end
+  
+    def mongoid_yml(options={})
+      options = mongoid_options(options)
+      mongo_conf_yaml = <<EOY
+host: #{options[:host]}
+port: #{options[:port]}
+database : #{options[:database]}
+use_utc: #{options[:use_utc]}
+use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
+EOY
+    end
+  
+  end
+end
