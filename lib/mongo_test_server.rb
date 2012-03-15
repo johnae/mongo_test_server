@@ -53,6 +53,7 @@ module MongoTestServer
     def initialize(port, name, path)
       @port = port
       @path = path
+      @name = name
       @mongo_process_or_thread = nil
       @mongo_instance_id = "#{Time.now.to_i}_#{Random.new.rand(10000000000..90000000000)}"
       @mongo_dir = "/tmp/#{name}_mongo_testserver_#{@mongo_instance_id}"
@@ -173,14 +174,19 @@ module MongoTestServer
       FileUtils.rm_rf @mongo_dir
       self
     end
+
+    def mongoid_options(options={})
+      options = {host: "localhost", port: @port, database: "#{@name}_test_db", use_utc: false, use_activesupport_time_zone: true}.merge(options)
+    end
   
-    def mongoid_yml
-    mongo_conf_yaml = <<EOY
-host: localhost
-port: #{@port}
-database : #{@name}_spec_db
-use_utc: false
-use_activesupport_time_zone: true
+    def mongoid_yml(options={})
+      options = mongoid_options(options)
+      mongo_conf_yaml = <<EOY
+host: #{options[:host]}
+port: #{options[:port]}
+database : #{options[:database]}
+use_utc: #{options[:use_utc]}
+use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
 EOY
     end
   

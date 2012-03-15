@@ -8,7 +8,15 @@ describe MongoTestServer::Mongod do
   let(:path) { `which mongod`.chomp }
   subject { MongoTestServer::Mongod.new(port, server_name, path)}
   let(:server_same_port) { MongoTestServer::Mongod.new(port, server_name, path)}
-
+  let(:correct_mongoid_options) do
+    {
+      host: "localhost",
+      port: port,
+      database: "#{server_name}_test_db",
+      use_utc: false,
+      use_activesupport_time_zone: true
+    }
+  end
   after(:each) do
     subject.stop
     server_same_port.stop
@@ -29,6 +37,19 @@ describe MongoTestServer::Mongod do
     it "should raise if there is an error starting mongod" do
       subject.port = bad_port ## port number is too high
       lambda { subject.start }.should raise_error
+    end
+
+  end
+
+  context "mongoid config" do
+
+    it "should return correct mongoid options" do
+      subject.mongoid_options.should == correct_mongoid_options
+    end
+
+    it "should return correct mongoid options with requested changes" do
+      changed_mongoid_options = correct_mongoid_options.merge(use_utc: true, use_activesupport_time_zone: false)
+      subject.mongoid_options(use_utc: true, use_activesupport_time_zone: false).should == changed_mongoid_options
     end
 
   end
