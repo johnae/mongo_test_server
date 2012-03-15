@@ -48,12 +48,14 @@ module MongoTestServer
     attr_accessor :path
     attr_reader :mongo_dir
     attr_reader :mongo_log
+    attr_reader :mongo_instance_id
   
     def initialize(port, name, path)
       @port = port
       @path = path
       @mongo_process_or_thread = nil
-      @mongo_dir = "/tmp/#{name}_mongo_testserver_#{Time.now.to_i}"
+      @mongo_instance_id = "#{Time.now.to_i}_#{Random.new.rand(10000000000..90000000000)}"
+      @mongo_dir = "/tmp/#{name}_mongo_testserver_#{@mongo_instance_id}"
       @mongo_log = "#{@mongo_dir}/mongo.log"
       @oplog_size = 200
       @configured = true
@@ -70,11 +72,11 @@ module MongoTestServer
     end
   
     def started?
-      File.exists?("#{@mongo_dir}/started")
+      File.directory?(@mongo_dir) && File.exists?("#{@mongo_dir}/started")
     end
 
     def killed?
-      File.exists?("#{@mongo_dir}/killed")
+      !File.directory?(@mongo_dir) || File.exists?("#{@mongo_dir}/killed")
     end
 
     def started=(running)
@@ -168,11 +170,8 @@ module MongoTestServer
       self.killed = true
       self.started = false
       mongo_pids.each { |ppid| `kill -9 #{ppid} 2> /dev/null` }
-      self
-    end
-
-    def cleanup
       FileUtils.rm_rf @mongo_dir
+      self
     end
   
     def mongoid_yml

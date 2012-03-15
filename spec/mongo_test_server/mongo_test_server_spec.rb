@@ -11,16 +11,13 @@ describe MongoTestServer::Mongod do
 
   after(:each) do
     subject.stop
-    subject.cleanup
     server_same_port.stop
-    server_same_port.cleanup
   end
 
   context "starting" do
 
     it "should start" do
       lambda { subject.start }.should_not raise_error
-      #puts "started: #{subject.inspect}"
       subject.started?.should be_true
     end
 
@@ -51,6 +48,7 @@ describe MongoTestServer::Mongod do
 
     it "should not complain if stopping a stopped mongod" do
       subject.started?.should be_true
+      subject.killed?.should be_false
       subject.stop
       subject.started?.should be_false
       subject.killed?.should be_true
@@ -61,7 +59,6 @@ describe MongoTestServer::Mongod do
       subject.started?.should be_true
       File.directory?(subject.mongo_dir).should be_true
       subject.stop
-      subject.cleanup
       File.exists?(subject.mongo_dir).should be_false
     end
 
