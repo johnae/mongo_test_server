@@ -43,6 +43,11 @@ module MongoTestServer
       end
   
     end
+
+    attr_accessor :port
+    attr_accessor :path
+    attr_reader :mongo_dir
+    attr_reader :mongo_log
   
     def initialize(port, name, path)
       @port = port
@@ -51,9 +56,12 @@ module MongoTestServer
       @mongo_dir = "/tmp/#{name}_mongo_testserver_#{Time.now.to_i}"
       @mongo_log = "#{@mongo_dir}/mongo.log"
       @oplog_size = 200
-      @mongo_cmd_line = "#{@path} --port #{@port} --dbpath #{@mongo_dir} --noprealloc --nojournal --noauth --nohttpinterface --nssize 1 --oplogSize #{@oplog_size} --smallfiles --logpath #{@mongo_log}"
       @configured = true
       self.started = false
+    end
+
+    def mongo_cmd_line
+      "#{@path} --port #{@port} --dbpath #{@mongo_dir} --noprealloc --nojournal --noauth --nohttpinterface --nssize 1 --oplogSize #{@oplog_size} --smallfiles --logpath #{@mongo_log}"
     end
   
     def prepare
@@ -70,11 +78,19 @@ module MongoTestServer
     end
 
     def started=(running)
-      running ? FileUtils.touch("#{@mongo_dir}/started") : FileUtils.rm_f("#{@mongo_dir}/started")
+      if File.directory?(@mongo_dir)
+        running ? FileUtils.touch("#{@mongo_dir}/started") : FileUtils.rm_f("#{@mongo_dir}/started")
+      end
     end
 
     def killed=(killing)
-      killing ? FileUtils.touch("#{@mongo_dir}/killed") : FileUtils.rm_f("#{@mongo_dir}/killed")
+      if File.directory?(@mongo_dir)
+        killing ? FileUtils.touch("#{@mongo_dir}/killed") : FileUtils.rm_f("#{@mongo_dir}/killed")
+      end
+    end
+
+    def error?
+      File.exists?("#{@mongo_dir}/error")
     end
   
     def configured?
@@ -82,13 +98,13 @@ module MongoTestServer
     end
   
     def start
-      #puts "Starting mongod: #{@mongo_cmd_line}"
+      #puts "Starting mongod: #{mongo_cmd_line}"
       unless started?
         prepare
         if RUBY_PLATFORM=='java'
-          @mongo_process_or_thread = Thread.new { run(@mongo_cmd_line) }
+          @mongo_process_or_thread = Thread.new { run(mongo_cmd_line) }
         else
-          @mongo_process_or_thread = fork { run(@mongo_cmd_line) }
+          @mongo_process_or_thread = fork { run(mongo_cmd_line) }
         end
         wait_until_ready
       end
@@ -108,8 +124,11 @@ module MongoTestServer
           <#{self.class.name}> Result is: #{IO.binread(@mongo_log)}
           <#{self.class.name}> Error is: #{File.read(error_filepath)}
         ERROR
+        File.open("#{@mongo_dir}/error", 'w') do |f|
+          f << error_message
+        end
         self.killed=true
-        raise Exception.new, error_message
+        #raise Exception.new, error_message
       end
       result
     end
@@ -121,21 +140,20 @@ module MongoTestServer
         c = Mongo::Connection.new("localhost", @port)
         c.close
       rescue Exception => e
-        if retries>0 && !killed?
+        if retries>0 && !killed? && !error?
           retries -= 1
           sleep 0.5
           retry
         else
           self.started = false
           error_lines = []
-          error_lines << "<#{self.class.name}> cmd was: #{@mongo_cmd_line}"
+          error_lines << "<#{self.class.name}> cmd was: #{mongo_cmd_line}"
           error_lines << "<#{self.class.name}> ERROR: Failed to connect to mongo database: #{e.message}"
           IO.binread(@mongo_log).split("\n").each do |line|
             error_lines << "<#{self.class.name}> #{line}"
           end
           stop
           raise Exception.new error_lines.join("\n")
-          exit(1)
         end
       end
     end
@@ -148,10 +166,13 @@ module MongoTestServer
     def stop
       mongo_pids = pids
       self.killed = true
-      mongo_pids.each { |ppid| `kill -9 #{ppid}` }
-      sleep 1
-      FileUtils.rm_rf @mongo_dir
+      self.started = false
+      mongo_pids.each { |ppid| `kill -9 #{ppid} 2> /dev/null` }
       self
+    end
+
+    def cleanup
+      FileUtils.rm_rf @mongo_dir
     end
   
     def mongoid_yml

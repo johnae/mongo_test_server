@@ -19,5 +19,6 @@ Gem::Specification.new do |gem|
   unless RUBY_PLATFORM == 'java'
     gem.add_development_dependency('bson_ext', '>=1.3.0')
   end
+  gem.add_development_dependency "rspec", '>=2.6.0'
 
 end
