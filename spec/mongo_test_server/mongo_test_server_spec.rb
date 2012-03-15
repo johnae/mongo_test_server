@@ -71,6 +71,7 @@ describe MongoTestServer::Mongod do
       subject.stop
       subject.started?.should be_false
       subject.killed?.should be_true
+      subject.running?.should be_false
     end
 
     it "should not complain if stopping a stopped mongod" do
@@ -79,6 +80,7 @@ describe MongoTestServer::Mongod do
       subject.stop
       subject.started?.should be_false
       subject.killed?.should be_true
+      subject.running?.should be_false
       lambda{ subject.stop }.should_not raise_error
     end
 
@@ -97,32 +99,24 @@ describe MongoTestServer::Mongod do
     let(:port) { 33221 }
     let(:path) { `which mongod`.chomp }
 
-    subject do
+    it "should configure a global mongod" do
       MongoTestServer::Mongod.configure do |server|
         server.name = name
         server.port = port
         server.path = path
       end
-      MongoTestServer::Mongod.server
-    end
-
-    it "should configure a global mongod" do
-      subject.start
-      subject.started?.should be_true
-      subject.port.should == port
-      subject.name.should == name
-      subject.path.should == path
+      server = MongoTestServer::Mongod.server
+      server.port.should == port
+      server.name.should == name
+      server.path.should == path
     end
 
     it "should configure a global mongod using options instead of block" do
-      MongoTestServer::Mongod.instance_variable_set(:@mongo_test_server, nil)
       MongoTestServer::Mongod.configure(port: (port+1), name: "someothername", path: path)
-      s = MongoTestServer::Mongod.server
-      s.start
-      s.started?.should be_true
-      s.port.should == (port+1)
-      s.name.should == "someothername"
-      s.path.should == path
+      server = MongoTestServer::Mongod.server
+      server.port.should == (port+1)
+      server.name.should == "someothername"
+      server.path.should == path
     end
 
   end

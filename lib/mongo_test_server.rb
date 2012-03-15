@@ -68,7 +68,7 @@ module MongoTestServer
     end
 
     def name
-      @name || "#{Random.new.rand(10000000000..90000000000)}"
+      @name ||= "#{Random.new.rand(10000000000..90000000000)}"
     end
 
     def mongo_dir
@@ -82,6 +82,11 @@ module MongoTestServer
     def prepare
       FileUtils.rm_rf self.mongo_dir
       FileUtils.mkdir_p self.mongo_dir
+    end
+
+    def running?
+      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
+      !pids.empty?
     end
   
     def started?
