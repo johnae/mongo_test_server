@@ -29,6 +29,12 @@ describe MongoTestServer::Mongod do
       subject.started?.should be_true
     end
 
+    it "should not complain if starting a started mongod" do
+      lambda { subject.start }.should_not raise_error
+      subject.started?.should be_true
+      lambda { subject.start }.should_not raise_error
+    end
+
     it "should raise if something else is listening on the same port" do
       server_same_port.start
       subject.start.should raise_error
@@ -81,6 +87,42 @@ describe MongoTestServer::Mongod do
       File.directory?(subject.mongo_dir).should be_true
       subject.stop
       File.exists?(subject.mongo_dir).should be_false
+    end
+
+  end
+
+  context "MongoTestServer#configure" do
+
+    let(:name) { "somename" }
+    let(:port) { 33221 }
+    let(:path) { `which mongod`.chomp }
+
+    subject do
+      MongoTestServer::Mongod.configure do |server|
+        server.name = name
+        server.port = port
+        server.path = path
+      end
+      MongoTestServer::Mongod.server
+    end
+
+    it "should configure a global mongod" do
+      subject.start
+      subject.started?.should be_true
+      subject.port.should == port
+      subject.name.should == name
+      subject.path.should == path
+    end
+
+    it "should configure a global mongod using options instead of block" do
+      MongoTestServer::Mongod.instance_variable_set(:@mongo_test_server, nil)
+      MongoTestServer::Mongod.configure(port: (port+1), name: "someothername", path: path)
+      s = MongoTestServer::Mongod.server
+      s.start
+      s.started?.should be_true
+      s.port.should == (port+1)
+      s.name.should == "someothername"
+      s.path.should == path
     end
 
   end
