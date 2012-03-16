@@ -49,7 +49,7 @@ module MongoTestServer
       self.path = path
       self.name = name
       @mongo_process_or_thread = nil
-      @mongo_instance_id = "#{Time.now.to_i}_#{Random.new.rand(10000000000..90000000000)}"
+      @mongo_instance_id = "#{Time.now.to_i}_#{Random.new.rand(100000..900000)}"
       @oplog_size = 200
       @configured = true
       self.started = false
@@ -68,7 +68,7 @@ module MongoTestServer
     end
 
     def name
-      @name ||= "#{Random.new.rand(10000000000..90000000000)}"
+      @name ||= "#{Random.new.rand(100000..900000)}"
     end
 
     def mongo_dir
