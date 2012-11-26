@@ -1,9 +1,9 @@
 # coding: UTF-8
-begin
-  require 'mongo'
-rescue LoadError => e
-  require 'moped'
-end
+#begin
+#  require 'mongo'
+#rescue LoadError => e
+#  require 'moped'
+#end
 require 'fileutils'
 require 'erb'
 require 'yaml'
@@ -160,10 +160,10 @@ module MongoTestServer
         c = Mongo::Connection.new("localhost", self.port)
         c.close
       elsif defined?(Moped)
-        session = Moped::Session.new([ "localhost:#{self.port}"])
-        session.logout
+        session = Moped::Session.new(["localhost:#{self.port}"])
+        session.disconnect
       else
-        raise Exeption.new "No mongo driver loaded!"
+        raise Exeption.new "No mongo driver loaded! Only the official mongo driver and the moped driver are supported"
       end
     end
 
