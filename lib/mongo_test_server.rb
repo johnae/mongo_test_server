@@ -231,11 +231,13 @@ EOY
     def mongoid3_yml(options={})
       options = mongoid3_options(options)
       mongo_conf_yaml = <<EOY
-hosts:
-  - #{options[:hosts].first}
-database : #{options[:database]}
-use_utc: #{options[:use_utc]}
-use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
+sessions:
+  default:
+    hosts:
+      - #{options[:hosts].first}
+    database : #{options[:database]}
+    use_utc: #{options[:use_utc]}
+    use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
 EOY
     end
 
