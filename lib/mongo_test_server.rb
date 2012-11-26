@@ -213,11 +213,26 @@ module MongoTestServer
       options = {host: "localhost", port: self.port, database: "#{self.name}_test_db", use_utc: false, use_activesupport_time_zone: true}.merge(options)
     end
 
+    def mongoid3_options(options={})
+      options = {hosts: ["localhost:#{self.port}"], database: "#{self.name}_test_db", use_utc: false, use_activesupport_time_zone: true}.merge(options)
+    end
+
     def mongoid_yml(options={})
       options = mongoid_options(options)
       mongo_conf_yaml = <<EOY
 host: #{options[:host]}
 port: #{options[:port]}
+database : #{options[:database]}
+use_utc: #{options[:use_utc]}
+use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
+EOY
+    end
+
+    def mongoid3_yml(options={})
+      options = mongoid3_options(options)
+      mongo_conf_yaml = <<EOY
+hosts:
+  - #{options[:hosts].first}
 database : #{options[:database]}
 use_utc: #{options[:use_utc]}
 use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
