@@ -1,5 +1,9 @@
 # coding: UTF-8
-require 'mongo'
+#begin
+#  require 'mongo'
+#rescue LoadError => e
+#  require 'moped'
+#end
 require 'fileutils'
 require 'erb'
 require 'yaml'
@@ -7,9 +11,9 @@ require 'tempfile'
 require "mongo_test_server/version"
 
 module MongoTestServer
-  
+
   class Mongod
-  
+
     class << self
 
       def configure(options={}, &block)
@@ -22,7 +26,7 @@ module MongoTestServer
       def server
         @mongo_test_server ||= new
       end
-  
+
       def start_server
         unless @mongo_test_server.nil?
           @mongo_test_server.start
@@ -30,20 +34,20 @@ module MongoTestServer
           puts "MongoTestServer not configured properly!"
         end
       end
-  
+
       def stop_server
         unless @mongo_test_server.nil?
           @mongo_test_server.stop
         end
       end
-  
+
     end
 
     attr_writer :port
     attr_writer :path
     attr_writer :name
     attr_reader :mongo_instance_id
-  
+
     def initialize(port=nil, name=nil, path=nil)
       self.port = port
       self.path = path
@@ -78,7 +82,7 @@ module MongoTestServer
     def mongo_cmd_line
       "#{self.path} --port #{self.port} --dbpath #{self.mongo_dir} --noprealloc --nojournal --noauth --nohttpinterface --nssize 1 --oplogSize #{@oplog_size} --smallfiles --logpath #{self.mongo_log}"
     end
-  
+
     def prepare
       FileUtils.rm_rf self.mongo_dir
       FileUtils.mkdir_p self.mongo_dir
@@ -88,7 +92,7 @@ module MongoTestServer
       pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
       !pids.empty?
     end
-  
+
     def started?
       File.directory?(self.mongo_dir) && File.exists?("#{self.mongo_dir}/started")
     end
@@ -112,11 +116,11 @@ module MongoTestServer
     def error?
       File.exists?("#{self.mongo_dir}/error")
     end
-  
+
     def configured?
       @configured
     end
-  
+
     def start
       unless started?
         prepare
@@ -140,8 +144,8 @@ module MongoTestServer
       unless killed? || $?.success?
         error_message = <<-ERROR
           <#{self.class.name}> Error executing command: #{command}
-          <#{self.class.name}> Result is: #{IO.binread(self.mongo_log)}
-          <#{self.class.name}> Error is: #{File.read(error_filepath)}
+          <#{self.class.name}> Result is: #{IO.binread(self.mongo_log) rescue "No mongo log on disk"}
+          <#{self.class.name}> Error is: #{File.read(error_filepath) rescue "No error file on disk"}
         ERROR
         File.open("#{self.mongo_dir}/error", 'w') do |f|
           f << error_message
@@ -150,13 +154,24 @@ module MongoTestServer
       end
       result
     end
-  
+
+    def test_connection!
+      if defined?(Mongo)
+        c = Mongo::Connection.new("localhost", self.port)
+        c.close
+      elsif defined?(Moped)
+        session = Moped::Session.new(["localhost:#{self.port}"])
+        session.disconnect
+      else
+        raise Exeption.new "No mongo driver loaded! Only the official mongo driver and the moped driver are supported"
+      end
+    end
+
     def wait_until_ready
       retries = 10
       begin
         self.started = true
-        c = Mongo::Connection.new("localhost", self.port)
-        c.close
+        test_connection!
       rescue Exception => e
         if retries>0 && !killed? && !error?
           retries -= 1
@@ -167,20 +182,24 @@ module MongoTestServer
           error_lines = []
           error_lines << "<#{self.class.name}> cmd was: #{mongo_cmd_line}"
           error_lines << "<#{self.class.name}> ERROR: Failed to connect to mongo database: #{e.message}"
-          IO.binread(self.mongo_log).split("\n").each do |line|
-            error_lines << "<#{self.class.name}> #{line}"
+          begin
+            IO.binread(self.mongo_log).split("\n").each do |line|
+              error_lines << "<#{self.class.name}> #{line}"
+            end
+          rescue Exception => e
+            error_lines << "No mongo log on disk at #{self.mongo_log}"
           end
           stop
           raise Exception.new error_lines.join("\n")
         end
       end
     end
-  
+
     def pids
       pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
       pids.split("\n").map {|p| (p.nil? || p=='') ? nil : p.to_i }
     end
-  
+
     def stop
       mongo_pids = pids
       self.killed = true
@@ -193,7 +212,11 @@ module MongoTestServer
     def mongoid_options(options={})
       options = {host: "localhost", port: self.port, database: "#{self.name}_test_db", use_utc: false, use_activesupport_time_zone: true}.merge(options)
     end
-  
+
+    def mongoid3_options(options={})
+      options = {hosts: ["localhost:#{self.port}"], database: "#{self.name}_test_db", use_utc: false, use_activesupport_time_zone: true}.merge(options)
+    end
+
     def mongoid_yml(options={})
       options = mongoid_options(options)
       mongo_conf_yaml = <<EOY
@@ -204,6 +227,19 @@ use_utc: #{options[:use_utc]}
 use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
 EOY
     end
-  
+
+    def mongoid3_yml(options={})
+      options = mongoid3_options(options)
+      mongo_conf_yaml = <<EOY
+sessions:
+  default:
+    hosts:
+      - #{options[:hosts].first}
+    database : #{options[:database]}
+    use_utc: #{options[:use_utc]}
+    use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
+EOY
+    end
+
   end
 end

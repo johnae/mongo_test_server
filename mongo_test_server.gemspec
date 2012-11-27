@@ -15,7 +15,8 @@ Gem::Specification.new do |gem|
   gem.require_paths = ["lib"]
   gem.version       = MongoTestServer::VERSION
 
-  gem.add_dependency('mongo', '>=1.6.0')
+  gem.add_development_dependency('mongo', '>=1.6.0')
+  gem.add_development_dependency('moped', '>=1.3.0')
   unless RUBY_PLATFORM == 'java'
     gem.add_development_dependency('bson_ext', '>=1.3.0')
   end

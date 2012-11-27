@@ -18,7 +18,7 @@ RSpec.configure do |config|
   # config.mock_with :flexmock
   # config.mock_with :rr
   config.mock_with :rspec
-  
+
   ## perhaps this should be removed as well
   ## and done in Rakefile?
   config.color_enabled = true
