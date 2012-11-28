@@ -86,9 +86,9 @@ describe MongoTestServer::Mongod do
 
     it "should cleanup after itself" do
       subject.started?.should be_true
-      File.directory?(subject.mongo_dir).should be_true
+      File.directory?(subject.mongo_storage).should be_true
       subject.stop
-      File.exists?(subject.mongo_dir).should be_false
+      File.exists?(subject.mongo_storage).should be_false
     end
 
   end
