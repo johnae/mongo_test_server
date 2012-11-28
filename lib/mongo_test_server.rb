@@ -10,6 +10,11 @@ require 'yaml'
 require 'tempfile'
 require "mongo_test_server/version"
 
+if defined?(Rails)
+  require 'mongo_test_server/railtie'
+  require 'mongo_test_server/engine'
+end
+
 module MongoTestServer
 
   class Mongod
@@ -47,6 +52,7 @@ module MongoTestServer
     attr_writer :path
     attr_writer :name
     attr_reader :mongo_instance_id
+    attr_reader :use_ram_disk
 
     def initialize(port=nil, name=nil, path=nil)
       self.port = port
@@ -57,6 +63,38 @@ module MongoTestServer
       @oplog_size = 200
       @configured = true
       self.started = false
+    end
+
+    def use_ram_disk=(bool)
+      if bool && (`which hdiutil`!='')
+        @use_ram_disk = true
+      else
+        $stderr.puts "MongoTestServer: can't use a ram disk on this system"
+        @use_ram_disk = false
+      end
+    end
+
+    def use_ram_disk?
+      @use_ram_disk
+    end
+
+    def ram_disk_name
+      @ram_disk_name ||= "mongodb-ram-#{self.name}"
+    end
+
+    def setup_ram_disk
+      @ram_disk_device = `hdiutil attach -nomount ram://1000000`.chomp
+      `diskutil erasevolume HFS+ #{ram_disk_name} #{@ram_disk_device}`
+      ram_disk_mount
+    end
+
+    def ram_disk_mount
+      "/Volumes/#{ram_disk_name}"
+    end
+
+    def teardown_ram_disk
+      `umount #{ram_disk_mount} 2> /dev/null`
+      `hdiutil detach #{@ram_disk_device} 2> /dev/null`
     end
 
     def mongo_log
@@ -76,7 +114,22 @@ module MongoTestServer
     end
 
     def mongo_dir
-      @mongo_dir ||= "/tmp/#{self.name}_mongo_testserver_#{@mongo_instance_id}"
+      @mongo_dir ||= lambda {
+        if self.use_ram_disk?
+          $stderr.puts "MongoTestServer: using ramdisk"
+          setup_ram_disk
+        else
+          "/tmp/#{self.name}_mongo_testserver_#{@mongo_instance_id}"
+        end
+        }.call
+    end
+
+    def remove_mongo_dir
+      if self.use_ram_disk?
+        teardown_ram_disk
+      else
+        FileUtils.rm_rf self.mongo_dir
+      end
     end
 
     def mongo_cmd_line
@@ -84,7 +137,7 @@ module MongoTestServer
     end
 
     def prepare
-      FileUtils.rm_rf self.mongo_dir
+      remove_mongo_dir
       FileUtils.mkdir_p self.mongo_dir
     end
 
@@ -205,7 +258,7 @@ module MongoTestServer
       self.killed = true
       self.started = false
       mongo_pids.each { |ppid| `kill -9 #{ppid} 2> /dev/null` }
-      FileUtils.rm_rf self.mongo_dir
+      remove_mongo_dir
       self
     end
 
