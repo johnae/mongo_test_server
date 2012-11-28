@@ -9,6 +9,8 @@ require 'erb'
 require 'yaml'
 require 'tempfile'
 require "mongo_test_server/version"
+require "mongo_test_server/tmp_storage"
+require "mongo_test_server/ram_disk_storage"
 
 if defined?(Rails)
   require 'mongo_test_server/railtie'
@@ -62,43 +64,32 @@ module MongoTestServer
       @mongo_instance_id = "#{Time.now.to_i}_#{Random.new.rand(100000..900000)}"
       @oplog_size = 200
       @configured = true
-      self.started = false
     end
 
     def use_ram_disk=(bool)
-      if bool && (`which hdiutil`!='')
-        @use_ram_disk = true
-      else
-        $stderr.puts "MongoTestServer: can't use a ram disk on this system"
-        @use_ram_disk = false
-      end
+      @use_ram_disk = bool && RamDiskStorage.supported?
     end
 
     def use_ram_disk?
       @use_ram_disk
     end
 
-    def ram_disk_name
-      @ram_disk_name ||= "mongodb-ram-#{self.name}"
+    def storage
+      @storage ||= if use_ram_disk?
+        $stderr.puts "MongoTestServer: using ram disk storage"
+        RamDiskStorage.new(@name)
+      else
+        $stderr.puts "MongoTestServer: using tmp disk storage"
+        TmpStorage.new(@name)
+      end
     end
 
-    def setup_ram_disk
-      @ram_disk_device = `hdiutil attach -nomount ram://1000000`.chomp
-      `diskutil erasevolume HFS+ #{ram_disk_name} #{@ram_disk_device}`
-      ram_disk_mount
-    end
-
-    def ram_disk_mount
-      "/Volumes/#{ram_disk_name}"
-    end
-
-    def teardown_ram_disk
-      `umount #{ram_disk_mount} 2> /dev/null`
-      `hdiutil detach #{@ram_disk_device} 2> /dev/null`
+    def mongo_storage
+      storage.path
     end
 
     def mongo_log
-      "#{mongo_dir}/mongo_log"
+      "#{storage.path}/mongo_log"
     end
 
     def port
@@ -113,61 +104,45 @@ module MongoTestServer
       @name ||= "#{Random.new.rand(100000..900000)}"
     end
 
-    def mongo_dir
-      @mongo_dir ||= lambda {
-        if self.use_ram_disk?
-          $stderr.puts "MongoTestServer: using ramdisk"
-          setup_ram_disk
-        else
-          "/tmp/#{self.name}_mongo_testserver_#{@mongo_instance_id}"
-        end
-        }.call
-    end
-
-    def remove_mongo_dir
-      if self.use_ram_disk?
-        teardown_ram_disk
-      else
-        FileUtils.rm_rf self.mongo_dir
-      end
-    end
-
     def mongo_cmd_line
-      "#{self.path} --port #{self.port} --dbpath #{self.mongo_dir} --noprealloc --nojournal --noauth --nohttpinterface --nssize 1 --oplogSize #{@oplog_size} --smallfiles --logpath #{self.mongo_log}"
+      "#{self.path} --port #{self.port} --profile 2 --dbpath #{self.mongo_storage} --syncdelay 0 --nojournal --noauth --nohttpinterface --nssize 1 --oplogSize #{@oplog_size} --smallfiles --logpath #{self.mongo_log}"
     end
 
-    def prepare
-      remove_mongo_dir
-      FileUtils.mkdir_p self.mongo_dir
+    def before_start
+      storage.create
+    end
+
+    def after_stop
+      storage.delete
     end
 
     def running?
-      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
+      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_storage} | grep -v grep | awk '{print \$1}'`.chomp
       !pids.empty?
     end
 
     def started?
-      File.directory?(self.mongo_dir) && File.exists?("#{self.mongo_dir}/started")
+      File.directory?(self.mongo_storage) && File.exists?("#{self.mongo_storage}/started")
     end
 
     def killed?
-      !File.directory?(self.mongo_dir) || File.exists?("#{self.mongo_dir}/killed")
+      !File.directory?(self.mongo_storage) || File.exists?("#{self.mongo_storage}/killed")
     end
 
     def started=(running)
-      if File.directory?(self.mongo_dir)
-        running ? FileUtils.touch("#{self.mongo_dir}/started") : FileUtils.rm_f("#{self.mongo_dir}/started")
+      if File.directory?(self.mongo_storage)
+        running ? FileUtils.touch("#{self.mongo_storage}/started") : FileUtils.rm_f("#{self.mongo_storage}/started")
       end
     end
 
     def killed=(killing)
-      if File.directory?(self.mongo_dir)
-        killing ? FileUtils.touch("#{self.mongo_dir}/killed") : FileUtils.rm_f("#{self.mongo_dir}/killed")
+      if File.directory?(self.mongo_storage)
+        killing ? FileUtils.touch("#{self.mongo_storage}/killed") : FileUtils.rm_f("#{self.mongo_storage}/killed")
       end
     end
 
     def error?
-      File.exists?("#{self.mongo_dir}/error")
+      File.exists?("#{self.mongo_storage}/error")
     end
 
     def configured?
@@ -176,7 +151,7 @@ module MongoTestServer
 
     def start
       unless started?
-        prepare
+        before_start
         if RUBY_PLATFORM=='java'
           @mongo_process_or_thread = Thread.new { run(mongo_cmd_line) }
         else
@@ -200,7 +175,7 @@ module MongoTestServer
           <#{self.class.name}> Result is: #{IO.binread(self.mongo_log) rescue "No mongo log on disk"}
           <#{self.class.name}> Error is: #{File.read(error_filepath) rescue "No error file on disk"}
         ERROR
-        File.open("#{self.mongo_dir}/error", 'w') do |f|
+        File.open("#{self.mongo_storage}/error", 'w') do |f|
           f << error_message
         end
         self.killed=true
@@ -249,7 +224,7 @@ module MongoTestServer
     end
 
     def pids
-      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_dir} | grep -v grep | awk '{print \$1}'`.chomp
+      pids = `ps ax | grep mongod | grep #{self.port} | grep #{self.mongo_storage} | grep -v grep | awk '{print \$1}'`.chomp
       pids.split("\n").map {|p| (p.nil? || p=='') ? nil : p.to_i }
     end
 
@@ -258,7 +233,7 @@ module MongoTestServer
       self.killed = true
       self.started = false
       mongo_pids.each { |ppid| `kill -9 #{ppid} 2> /dev/null` }
-      remove_mongo_dir
+      after_stop
       self
     end
 
