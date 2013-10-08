@@ -263,7 +263,7 @@ sessions:
   default:
     hosts:
       - #{options[:hosts].first}
-    database : #{options[:database]}
+    database: #{options[:database]}
     use_utc: #{options[:use_utc]}
     use_activesupport_time_zone: #{options[:use_activesupport_time_zone]}
 EOY
